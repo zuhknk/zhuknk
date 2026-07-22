@@ -1,6 +1,6 @@
 """FastAPI 主应用 — SSE 流式分析管道"""
 
-import json, re
+import json, re, uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
@@ -15,8 +15,8 @@ from collectors import collect_from_url
 from cleaners.review_cleaner import clean_reviews, get_valid_reviews, get_cleaning_stats
 from analyzers.review_analyzer import discover_topics, topics_to_findings, validate_evidence
 from validators.result_validator import generate_placeholder
-from prompts import ANALYSIS_PIPELINE_SYSTEM
-from llm_client import analyze_batch
+from prompts import ANALYSIS_PIPELINE_SYSTEM, ALL_IN_ONE_SYSTEM
+from llm_client import analyze_batch, format_reviews_for_llm
 
 app = FastAPI(title="LaienTech iOS App Review Analyzer", version="0.1.0")
 app.add_middleware(
@@ -128,82 +128,183 @@ async def analyze(request: AnalysisRequest):
             llm_available = _check_llm_available()
 
             if llm_available:
-                # 阶段 4: analyzing (并发批次)
-                yield sse_event("analyzing", {"stage": "analyzing", "progress": 50, "message": "LLM 主题发现中..."})
-                topics = await discover_topics(valid, analysis_goal)
-                findings = topics_to_findings(topics)
+                # 小数据集（≤20条）：单次 LLM 调用完成全部任务
+                if len(valid) <= 20:
+                    yield sse_event("analyzing", {"stage": "analyzing", "progress": 50,
+                                 "message": f"LLM 一体化分析中（{len(valid)} 条评论）..."})
 
-                # 阶段 5: evidence (纯本地，瞬间完成)
-                yield sse_event("evidence", {"stage": "evidence", "progress": 65, "message": "证据验证中..."})
-                findings = await validate_evidence(findings, valid)
+                    reviews_json = format_reviews_for_llm(valid)
+                    goal_hint = f"\n\n分析目标: {analysis_goal}。" if analysis_goal else ""
+                    user_prompt = json.dumps(reviews_json, ensure_ascii=False, indent=2) + goal_hint
 
-                # 阶段 6-8: PRD + 测试用例 + 校验 (合并为一次 LLM 调用)
-                yield sse_event("prd", {"stage": "prd", "progress": 75, "message": "生成需求与测试用例..."})
-                findings_json = [{
-                    "finding_id": f.finding_id, "topic": f.topic, "description": f.description,
-                    "severity": f.severity, "sentiment": f.sentiment, "sample_count": f.sample_count,
-                    "review_ids": f.review_ids[:10], "excerpts": f.excerpts[:3],
-                } for f in findings]
-                goal_hint = f"\n\n分析目标: {analysis_goal}。" if analysis_goal else ""
+                    try:
+                        result = await analyze_batch(ALL_IN_ONE_SYSTEM, user_prompt, max_tokens=4096)
+                    except Exception as e:
+                        print(f"All-in-one LLM failed: {e}")
+                        result = {}
 
-                try:
-                    result = await analyze_batch(ANALYSIS_PIPELINE_SYSTEM,
-                        json.dumps(findings_json, ensure_ascii=False) + goal_hint,
-                        max_tokens=8192)
-                except Exception as e:
-                    print(f"Combined analysis failed: {e}")
-                    result = {}
+                    # 解析 topics → findings
+                    findings = []
+                    for topic in result.get("topics", []):
+                        findings.append(ReviewFinding(
+                            finding_id=str(uuid.uuid4())[:8],
+                            topic=topic.get("topic", "Unknown"),
+                            description=topic.get("description", ""),
+                            severity=topic.get("severity", "medium"),
+                            sentiment=topic.get("sentiment", "neutral"),
+                            sample_count=len(topic.get("review_ids", [])),
+                            review_ids=topic.get("review_ids", []),
+                            excerpts=topic.get("excerpts", []),
+                            confidence=topic.get("confidence", 0.5),
+                            evidence_level="sufficient",
+                            conflicting_feedback=topic.get("conflicting_feedback", []),
+                            source="llm", uncertainty="",
+                        ))
 
-                # 解析需求
-                requirements = []
-                for i, req in enumerate(result.get("requirements", [])):
-                    related_ids = req.get("related_finding_ids", [])
-                    related_review_ids = []
-                    for fid in related_ids:
-                        for f in findings:
-                            if f.finding_id == fid:
-                                related_review_ids.extend(f.review_ids)
+                    # 证据验证（本地）
+                    yield sse_event("evidence", {"stage": "evidence", "progress": 65, "message": "证据验证中..."})
+                    findings = await validate_evidence(findings, valid)
+
+                    # 解析需求
+                    yield sse_event("prd", {"stage": "prd", "progress": 75, "message": "生成需求与测试用例..."})
+                    requirements = []
+                    for i, req in enumerate(result.get("requirements", [])):
+                        related_ids = req.get("related_finding_ids", [])
+                        related_review_ids = []
+                        for fid in related_ids:
+                            for f in findings:
+                                if f.finding_id == fid:
+                                    related_review_ids.extend(f.review_ids)
+                                    break
+                        requirements.append(Requirement(
+                            req_id=req.get("req_id", f"REQ-{i+1:03d}"),
+                            title=req.get("title", ""),
+                            description=req.get("description", ""),
+                            user_story=req.get("user_story", ""),
+                            priority=req.get("priority", "P2"),
+                            acceptance_criteria=req.get("acceptance_criteria", []),
+                            related_finding_ids=related_ids,
+                            related_review_ids=list(set(related_review_ids))[:10],
+                            is_assumption=req.get("is_assumption", False),
+                        ))
+
+                    # 解析测试用例
+                    test_cases = []
+                    for i, tc in enumerate(result.get("test_cases", [])):
+                        req_id = tc.get("req_id", "")
+                        source_review_ids = tc.get("source_review_ids", [])
+                        if not source_review_ids:
+                            for r in requirements:
+                                if r.req_id == req_id:
+                                    source_review_ids = r.related_review_ids[:5]
+                                    break
+                        test_cases.append(TestCase(
+                            case_id=tc.get("case_id", f"TC-{i+1:03d}"),
+                            req_id=req_id,
+                            title=tc.get("title", ""),
+                            preconditions=tc.get("preconditions", []),
+                            steps=tc.get("steps", []),
+                            expected_result=tc.get("expected_result", ""),
+                            source_review_ids=source_review_ids,
+                            priority=tc.get("priority", "P1"),
+                        ))
+
+                    # 解析校验报告
+                    val = result.get("validation", {})
+                    validation_report = ValidationReport(
+                        validation_passed=val.get("validation_passed", True),
+                        issues=val.get("issues", []),
+                        traceability=val.get("traceability", {}),
+                        summary=val.get("summary", ""),
+                    )
+
+                    # 推送 testcase + validating 阶段
+                    yield sse_event("testcase", {"stage": "testcase", "progress": 85, "message": f"生成 {len(test_cases)} 个测试用例"})
+                    yield sse_event("validating", {"stage": "validating", "progress": 95, "message": "校验可追溯性..."})
+
+                else:
+                    # 大数据集：两步 LLM 调用
+                    # 阶段 4: analyzing (并发批次)
+                    yield sse_event("analyzing", {"stage": "analyzing", "progress": 50, "message": "LLM 主题发现中..."})
+                    topics = await discover_topics(valid, analysis_goal)
+                    findings = topics_to_findings(topics)
+
+                    # 阶段 5: evidence (纯本地，瞬间完成)
+                    yield sse_event("evidence", {"stage": "evidence", "progress": 65, "message": "证据验证中..."})
+                    findings = await validate_evidence(findings, valid)
+
+                    # 阶段 6-8: PRD + 测试用例 + 校验 (合并为一次 LLM 调用)
+                    yield sse_event("prd", {"stage": "prd", "progress": 75, "message": "生成需求与测试用例..."})
+                    findings_json = [{
+                        "finding_id": f.finding_id, "topic": f.topic, "description": f.description,
+                        "severity": f.severity, "sentiment": f.sentiment, "sample_count": f.sample_count,
+                        "review_ids": f.review_ids[:10], "excerpts": f.excerpts[:3],
+                    } for f in findings]
+                    goal_hint = f"\n\n分析目标: {analysis_goal}。" if analysis_goal else ""
+
+                    try:
+                        result = await analyze_batch(ANALYSIS_PIPELINE_SYSTEM,
+                            json.dumps(findings_json, ensure_ascii=False) + goal_hint,
+                            max_tokens=4096)
+                    except Exception as e:
+                        print(f"Combined analysis failed: {e}")
+                        result = {}
+
+                    # 解析需求
+                    requirements = []
+                    for i, req in enumerate(result.get("requirements", [])):
+                        related_ids = req.get("related_finding_ids", [])
+                        related_review_ids = []
+                        for fid in related_ids:
+                            for f in findings:
+                                if f.finding_id == fid:
+                                    related_review_ids.extend(f.review_ids)
+                                    break
+                        requirements.append(Requirement(
+                            req_id=req.get("req_id", f"REQ-{i+1:03d}"),
+                            title=req.get("title", ""),
+                            description=req.get("description", ""),
+                            user_story=req.get("user_story", ""),
+                            priority=req.get("priority", "P2"),
+                            acceptance_criteria=req.get("acceptance_criteria", []),
+                            related_finding_ids=related_ids,
+                            related_review_ids=list(set(related_review_ids))[:10],
+                            is_assumption=req.get("is_assumption", False),
+                        ))
+
+                    # 解析测试用例
+                    test_cases = []
+                    for i, tc in enumerate(result.get("test_cases", [])):
+                        req_id = tc.get("req_id", "")
+                        source_review_ids = []
+                        for r in requirements:
+                            if r.req_id == req_id:
+                                source_review_ids = r.related_review_ids[:5]
                                 break
-                    requirements.append(Requirement(
-                        req_id=req.get("req_id", f"REQ-{i+1:03d}"),
-                        title=req.get("title", ""),
-                        description=req.get("description", ""),
-                        user_story=req.get("user_story", ""),
-                        priority=req.get("priority", "P2"),
-                        acceptance_criteria=req.get("acceptance_criteria", []),
-                        related_finding_ids=related_ids,
-                        related_review_ids=list(set(related_review_ids))[:10],
-                        is_assumption=req.get("is_assumption", False),
-                    ))
+                        test_cases.append(TestCase(
+                            case_id=tc.get("case_id", f"TC-{i+1:03d}"),
+                            req_id=req_id,
+                            title=tc.get("title", ""),
+                            preconditions=tc.get("preconditions", []),
+                            steps=tc.get("steps", []),
+                            expected_result=tc.get("expected_result", ""),
+                            source_review_ids=source_review_ids,
+                            priority=tc.get("priority", "P1"),
+                        ))
 
-                # 解析测试用例
-                test_cases = []
-                for i, tc in enumerate(result.get("test_cases", [])):
-                    req_id = tc.get("req_id", "")
-                    source_review_ids = []
-                    for r in requirements:
-                        if r.req_id == req_id:
-                            source_review_ids = r.related_review_ids[:5]
-                            break
-                    test_cases.append(TestCase(
-                        case_id=tc.get("case_id", f"TC-{i+1:03d}"),
-                        req_id=req_id,
-                        title=tc.get("title", ""),
-                        preconditions=tc.get("preconditions", []),
-                        steps=tc.get("steps", []),
-                        expected_result=tc.get("expected_result", ""),
-                        source_review_ids=source_review_ids,
-                        priority=tc.get("priority", "P1"),
-                    ))
+                    # 解析校验报告
+                    val = result.get("validation", {})
+                    validation_report = ValidationReport(
+                        validation_passed=val.get("validation_passed", True),
+                        issues=val.get("issues", []),
+                        traceability=val.get("traceability", {}),
+                        summary=val.get("summary", ""),
+                    )
 
-                # 解析校验报告
-                val = result.get("validation", {})
-                validation_report = ValidationReport(
-                    validation_passed=val.get("validation_passed", True),
-                    issues=val.get("issues", []),
-                    traceability=val.get("traceability", {}),
-                    summary=val.get("summary", ""),
-                )
+                    # 推送 testcase + validating 阶段
+                    yield sse_event("testcase", {"stage": "testcase", "progress": 85, "message": f"生成 {len(test_cases)} 个测试用例"})
+                    yield sse_event("validating", {"stage": "validating", "progress": 95, "message": "校验可追溯性..."})
+
             else:
                 yield sse_event("analyzing", {"stage": "analyzing", "progress": 50,
                                 "message": "\u672a\u914d\u7f6e API Key\uff0c\u4f7f\u7528\u7edf\u8ba1\u6a21\u5f0f..."})

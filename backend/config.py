@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # LLM — 提供商选择: openai | deepseek | qwen | ollama
     LLM_PROVIDER: str = "openai"
     LLM_MODEL: str = "gpt-4o-mini"
-    LLM_TIMEOUT: int = 120
+    LLM_TIMEOUT: int = 60
 
     # OpenAI
     OPENAI_API_KEY: str = ""

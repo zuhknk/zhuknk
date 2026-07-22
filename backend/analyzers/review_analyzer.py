@@ -25,7 +25,7 @@ async def discover_topics(reviews: list[ReviewCleaned], analysis_goal: str = "")
         try:
             reviews_json = format_reviews_for_llm(batch)
             user_prompt = json.dumps(reviews_json, ensure_ascii=False, indent=2)
-            result = await analyze_batch(TOPIC_DISCOVERY_SYSTEM, user_prompt + goal_hint)
+            result = await analyze_batch(TOPIC_DISCOVERY_SYSTEM, user_prompt + goal_hint, max_tokens=2048)
             return result.get("topics", [])
         except Exception as e:
             print(f"Batch {batch_num} LLM failed: {e}")

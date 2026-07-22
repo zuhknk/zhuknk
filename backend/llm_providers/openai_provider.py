@@ -15,7 +15,7 @@ class OpenAIProvider(LLMProvider):
     def name(self) -> str:
         return f"openai/{self._model}"
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(stop=stop_after_attempt(1), wait=wait_exponential(multiplier=0.5, min=1, max=3))
     async def chat(self, system_prompt: str, user_prompt: str,
                    temperature: float = 0.3, max_tokens: int = 4096,
                    response_format_json: bool = True) -> dict:
