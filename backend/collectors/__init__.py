@@ -13,6 +13,10 @@ async def collect_from_url(url: str, max_pages: int = 5) -> tuple[list[ReviewRaw
     统一采集入口
     返回: (reviews, site_type)
     """
+    # 快速校验：非 HTTP URL 直接返回空
+    if not url or not url.startswith(("http://", "https://")):
+        return [], "unknown"
+
     site_key = detect_site(url)
 
     if site_key:

@@ -45,12 +45,13 @@
                   :type="showKey ? 'text' : 'password'"
                   v-model="form.api_key"
                   class="input key-input"
-                  placeholder="输入 API Key"
+                  :placeholder="apiKeySet ? 'API Key 已保存，留空则不修改' : '输入 API Key'"
                 />
                 <button type="button" class="btn-toggle" @click="showKey = !showKey">
                   {{ showKey ? '隐藏' : '显示' }}
                 </button>
               </div>
+              <div v-if="apiKeySet && !form.api_key" class="key-status">Key 已配置，如需修改请输入新 Key</div>
             </div>
 
             <!-- Base URL -->
@@ -106,6 +107,8 @@ const form = reactive({
   timeout: 120,
 })
 
+const apiKeySet = ref(false)  // 后端已保存的 key 状态
+
 const KEY_URLS = {
   openai: 'https://platform.openai.com/api-keys',
   deepseek: 'https://platform.deepseek.com/api_keys',
@@ -136,6 +139,7 @@ async function fetchSettings() {
     form.model = cur.model || 'gpt-4o-mini'
     form.base_url = cur.base_url || ''
     form.timeout = cur.timeout || 120
+    apiKeySet.value = cur.api_key_set || false
   } catch (e) {
     console.error('Failed to fetch LLM settings:', e)
   }
@@ -339,6 +343,11 @@ select.input {
 .key-input {
   flex: 1;
   font-family: var(--font-family-mono);
+}
+.key-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-success);
 }
 .btn-toggle {
   padding: 0 14px;

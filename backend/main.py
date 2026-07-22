@@ -31,6 +31,28 @@ app.add_middleware(
 from database import init_db
 init_db()
 
+# 模块级 LLM 可用性缓存（仅检查一次）
+_llm_available_cache = None
+
+
+def _check_llm_available() -> bool:
+    """检查 LLM 是否可用，结果缓存"""
+    global _llm_available_cache
+    if _llm_available_cache is not None:
+        return _llm_available_cache
+    provider = settings.LLM_PROVIDER.lower()
+    if provider == "ollama":
+        _llm_available_cache = True
+    elif provider == "openai" and settings.OPENAI_API_KEY:
+        _llm_available_cache = True
+    elif provider == "deepseek" and settings.DEEPSEEK_API_KEY:
+        _llm_available_cache = True
+    elif provider == "qwen" and settings.QWEN_API_KEY:
+        _llm_available_cache = True
+    else:
+        _llm_available_cache = False
+    return _llm_available_cache
+
 
 def sse_event(event: str, data) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
@@ -39,23 +61,16 @@ def sse_event(event: str, data) -> str:
 @app.get("/api/health")
 async def health():
     from llm_providers import get_provider
-    from config import settings
     provider_name = "none"
-    llm_configured = False
     try:
         provider = get_provider()
         provider_name = provider.name
-        # 检查 API Key 是否实际配置
-        if settings.LLM_PROVIDER.lower() == "ollama":
-            llm_configured = True  # Ollama 不需要 API key
-        elif settings.OPENAI_API_KEY or settings.DEEPSEEK_API_KEY or settings.QWEN_API_KEY:
-            llm_configured = True
     except Exception:
         pass
     return {
         "status": "ok",
         "version": "0.1.0",
-        "llm_configured": llm_configured,
+        "llm_configured": _check_llm_available(),
         "llm_provider": provider_name,
     }
 
@@ -110,15 +125,7 @@ async def analyze(request: AnalysisRequest):
                             "stats": stats, "message": f"\u6e05\u6d17\u5b8c\u6210\uff0c\u6709\u6548\u8bc4\u8bba {len(valid)} \u6761"})
 
             # ===== 阶段 4-8: LLM / 统计模式 =====
-            llm_available = False
-            if settings.LLM_PROVIDER.lower() == "ollama":
-                llm_available = True
-            elif settings.LLM_PROVIDER.lower() == "openai" and settings.OPENAI_API_KEY:
-                llm_available = True
-            elif settings.LLM_PROVIDER.lower() == "deepseek" and settings.DEEPSEEK_API_KEY:
-                llm_available = True
-            elif settings.LLM_PROVIDER.lower() == "qwen" and settings.QWEN_API_KEY:
-                llm_available = True
+            llm_available = _check_llm_available()
 
             if llm_available:
                 # 阶段 4: analyzing (并发批次)
@@ -361,7 +368,7 @@ async def update_llm_settings(request: Request):
     base_url = data.get("base_url", "")
     timeout = data.get("timeout", 120)
 
-    # 更新 settings
+    # 更新 settings 内存
     settings.LLM_PROVIDER = provider
     settings.LLM_TIMEOUT = timeout
 
@@ -380,10 +387,61 @@ async def update_llm_settings(request: Request):
             settings.QWEN_API_KEY = api_key
             settings.QWEN_BASE_URL = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+    # 持久化到 .env 文件
+    _save_env_file(provider, model, api_key, base_url, timeout)
+
+    # 重置 LLM 可用性缓存
+    global _llm_available_cache
+    _llm_available_cache = None
+
     # 重置 provider 单例
     reset_provider()
 
     return {"success": True, "provider": provider, "model": model}
+
+
+def _save_env_file(provider: str, model: str, api_key: str, base_url: str, timeout: int):
+    """将 LLM 配置写入 .env 文件持久化"""
+    from pathlib import Path
+
+    env_path = Path(__file__).parent / ".env"
+
+    # 读取现有 .env 内容
+    kv = {}
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    kv[k.strip()] = v
+
+    # 更新配置项
+    kv["LLM_PROVIDER"] = provider
+    kv["LLM_TIMEOUT"] = str(timeout)
+
+    if provider == "ollama":
+        kv["OLLAMA_MODEL"] = model or "qwen2.5:7b"
+        kv["OLLAMA_BASE_URL"] = base_url or "http://localhost:11434/v1"
+    else:
+        kv["LLM_MODEL"] = model or "gpt-4o-mini"
+        if provider == "openai":
+            if api_key:
+                kv["OPENAI_API_KEY"] = api_key
+            kv["OPENAI_BASE_URL"] = base_url or "https://api.openai.com/v1"
+        elif provider == "deepseek":
+            if api_key:
+                kv["DEEPSEEK_API_KEY"] = api_key
+            kv["DEEPSEEK_BASE_URL"] = base_url or "https://api.deepseek.com/v1"
+        elif provider == "qwen":
+            if api_key:
+                kv["QWEN_API_KEY"] = api_key
+            kv["QWEN_BASE_URL"] = base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    # 写回 .env
+    with open(env_path, "w", encoding="utf-8") as f:
+        for k, v in kv.items():
+            f.write(f"{k}={v}\n")
 
 
 @app.post("/api/settings/llm/test")

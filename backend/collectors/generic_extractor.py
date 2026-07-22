@@ -40,18 +40,20 @@ class GenericExtractor(BaseExtractor):
 
     async def _fetch_page(self, url: str) -> str:
         """获取网页 HTML"""
+        # 快速校验：只处理 http/https
+        if not url.startswith(("http://", "https://")):
+            return ""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=5) as client:
                 resp = await client.get(url, headers=headers)
                 resp.raise_for_status()
                 return resp.text
-        except Exception as e:
-            print(f"Failed to fetch {url}: {e}")
+        except Exception:
             return ""
 
     def _extract_candidates(self, html: str) -> list[dict]:
