@@ -2,9 +2,16 @@
 
 import uuid, json
 from collections import defaultdict
-from llm_client import analyze_batch
-from prompts import VALIDATION_SYSTEM
 from models import ReviewFinding, Requirement, TestCase, ValidationReport, ReviewCleaned
+
+VALIDATION_SYSTEM = """You are a QA validator. Given analysis findings, requirements, and test cases, verify:
+1. Every requirement references at least one finding
+2. Every test case maps to a valid requirement
+3. No contradictory requirements exist
+4. Traceability is complete
+
+Return JSON: {"validation_passed": bool, "issues": [string], "traceability": {req_id: [case_id]}, "summary": string}"""
+
 
 
 async def validate_results(findings: list[ReviewFinding], requirements: list[Requirement],

@@ -1,6 +1,6 @@
 """LLM 驱动的主题发现 + 证据验证"""
 
-import uuid, json
+import uuid, json, asyncio
 from config import settings
 from llm_client import analyze_batch, format_reviews_for_llm
 from prompts import TOPIC_DISCOVERY_SYSTEM
@@ -8,36 +8,47 @@ from models import ReviewFinding, ReviewCleaned
 
 
 async def discover_topics(reviews: list[ReviewCleaned], analysis_goal: str = "") -> list[dict]:
-    """分批调用 LLM 发现主题，跨批次合并相同主题"""
+    """并发调用 LLM 发现主题，跨批次合并相同主题"""
     batch_size = settings.BATCH_SIZE
-    all_topics = {}
 
+    # 构建所有批次
+    batches = []
     for i in range(0, len(reviews), batch_size):
         batch = reviews[i:i + batch_size]
-        reviews_json = format_reviews_for_llm(batch)
-        user_prompt = json.dumps(reviews_json, ensure_ascii=False, indent=2)
+        batches.append((batch, i // batch_size + 1))
 
-        goal_hint = ""
-        if analysis_goal:
-            goal_hint = f"\n\n分析目标: {analysis_goal}。请重点关注与目标相关的反馈。"
+    goal_hint = ""
+    if analysis_goal:
+        goal_hint = f"\n\n分析目标: {analysis_goal}。请重点关注与目标相关的反馈。"
 
+    async def process_batch(batch, batch_num):
         try:
+            reviews_json = format_reviews_for_llm(batch)
+            user_prompt = json.dumps(reviews_json, ensure_ascii=False, indent=2)
             result = await analyze_batch(TOPIC_DISCOVERY_SYSTEM, user_prompt + goal_hint)
-            for topic in result.get("topics", []):
-                name = topic.get("topic", "").strip().lower()
-                if name in all_topics:
-                    # 合并：合并 review_ids 和 excerpts
-                    existing = all_topics[name]
-                    existing["review_ids"] = list(set(existing.get("review_ids", []) + topic.get("review_ids", [])))
-                    existing["excerpts"] = list(set(existing.get("excerpts", []) + topic.get("excerpts", [])))
-                    existing["sample_count"] = len(existing["review_ids"])
-                    existing["confidence"] = max(existing.get("confidence", 0), topic.get("confidence", 0))
-                else:
-                    topic["sample_count"] = len(topic.get("review_ids", []))
-                    all_topics[name] = topic
+            return result.get("topics", [])
         except Exception as e:
-            print(f"Batch {i // batch_size + 1} LLM failed: {e}")
-            continue
+            print(f"Batch {batch_num} LLM failed: {e}")
+            return []
+
+    # 并发执行所有批次
+    tasks = [process_batch(batch, num) for batch, num in batches]
+    all_results = await asyncio.gather(*tasks)
+
+    # 合并主题
+    all_topics = {}
+    for topics in all_results:
+        for topic in topics:
+            name = topic.get("topic", "").strip().lower()
+            if name in all_topics:
+                existing = all_topics[name]
+                existing["review_ids"] = list(set(existing.get("review_ids", []) + topic.get("review_ids", [])))
+                existing["excerpts"] = list(set(existing.get("excerpts", []) + topic.get("excerpts", [])))
+                existing["sample_count"] = len(existing["review_ids"])
+                existing["confidence"] = max(existing.get("confidence", 0), topic.get("confidence", 0))
+            else:
+                topic["sample_count"] = len(topic.get("review_ids", []))
+                all_topics[name] = topic
 
     return list(all_topics.values())
 

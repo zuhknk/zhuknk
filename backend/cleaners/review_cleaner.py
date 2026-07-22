@@ -70,6 +70,6 @@ def get_cleaning_stats(cleaned: list[ReviewCleaned]) -> dict:
     return {
         "total": len(cleaned),
         "valid": len(get_valid_reviews(cleaned)),
-        "exact_duplicates": sum(1 for c in cleaned if c.is_duplicate),
+        "duplicates": sum(1 for c in cleaned if c.is_duplicate),
         "noise": sum(1 for c in cleaned if c.is_noise),
     }

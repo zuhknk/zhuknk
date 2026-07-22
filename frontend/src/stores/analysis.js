@@ -102,7 +102,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
         dataLimitations.value = data.data_limitations || []
         warnings.value = data.warnings || []
         analysisGoal.value = data.analysis_goal || ''
-        activeTab.value = 'findings'
+        activeTab.value = 'charts'
         break
       case 'error':
         setError(data.message || '分析过程发生错误')

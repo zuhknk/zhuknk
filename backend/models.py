@@ -7,7 +7,9 @@ from pydantic import BaseModel
 
 class AnalysisRequest(BaseModel):
     """分析请求"""
-    app_store_url: str = ""
+    url: str = ""  # 统一 URL 字段（支持任意网站）
+    app_store_url: str = ""  # 兼容旧接口
+    google_play_url: str = ""  # 兼容旧接口
     sort: str = "mostrecent"
     file_data: Optional[list[dict]] = None
     file_format: str = "json"
@@ -26,6 +28,7 @@ class ReviewRaw(BaseModel):
     date: str = ""
     vote_sum: int
     vote_count: int
+    store: str = "apple"  # apple | google | file
 
 
 class ReviewCleaned(ReviewRaw):

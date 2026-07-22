@@ -63,12 +63,19 @@
           {{ tab.label }}
           <span class="tab-count">{{ tab.count }}</span>
         </button>
-        <button class="btn-export" @click="store.exportJSON()">导出 JSON</button>
+        <button class="btn-export" @click="toggleExportMenu">导出</button>
+        <div v-if="showExportMenu" class="export-menu">
+          <button @click="doExport('json')">JSON</button>
+          <button @click="doExport('pdf')">PDF</button>
+          <button @click="doExport('docx')">Word</button>
+          <button @click="doExport('xlsx')">Excel</button>
+        </div>
       </div>
 
       <!-- Tab 内容 -->
       <div class="tab-content">
-        <ReviewTable v-if="store.activeTab === 'reviews'" />
+        <ChartsPanel v-if="store.activeTab === 'charts'" />
+        <ReviewTable v-else-if="store.activeTab === 'reviews'" />
         <FindingsPanel v-else-if="store.activeTab === 'findings'" />
         <RequirementsPanel v-else-if="store.activeTab === 'requirements'" />
         <TestCasesPanel v-else-if="store.activeTab === 'testcases'" />
@@ -78,14 +85,56 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useAnalysisStore } from '../stores/analysis.js'
 import ReviewTable from './ReviewTable.vue'
 import FindingsPanel from './FindingsPanel.vue'
 import RequirementsPanel from './RequirementsPanel.vue'
 import TestCasesPanel from './TestCasesPanel.vue'
+import ChartsPanel from './ChartsPanel.vue'
 
 const store = useAnalysisStore()
+
+const showExportMenu = ref(false)
+
+function toggleExportMenu() {
+  showExportMenu.value = !showExportMenu.value
+}
+
+async function doExport(format) {
+  showExportMenu.value = false
+  const data = {
+    reviews: store.reviews,
+    findings: store.findings,
+    requirements: store.requirements,
+    test_cases: store.testCases,
+    validation_report: store.validationReport,
+    analysis_goal: store.analysisGoal,
+  }
+
+  if (format === 'json') {
+    store.exportJSON()
+    return
+  }
+
+  try {
+    const response = await fetch(`/api/export/${format}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const ext = format === 'docx' ? 'docx' : format
+    a.download = `app-review-analysis.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    console.error('Export failed:', e)
+  }
+}
 
 const stageOrder = ['parsing', 'collecting', 'cleaning', 'analyzing', 'evidence', 'prd', 'testcase', 'validating']
 const stageLabels = {
@@ -106,6 +155,7 @@ const stages = computed(() => {
 })
 
 const tabs = computed(() => [
+  { key: 'charts', label: '可视化', count: '' },
   { key: 'reviews', label: '评论', count: store.reviews.length },
   { key: 'findings', label: '分析发现', count: store.findings.length },
   { key: 'requirements', label: '需求', count: store.requirements.length },
@@ -233,6 +283,7 @@ const tabs = computed(() => [
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 16px;
   padding-bottom: 0;
+  position: relative;
 }
 .result-tabs .tab-btn {
   padding: 10px 20px;
@@ -271,6 +322,34 @@ const tabs = computed(() => [
 }
 .btn-export:hover {
   border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+  min-width: 120px;
+}
+.export-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.export-menu button:hover {
+  background: var(--bg-input);
   color: var(--color-primary);
 }
 .tab-content {

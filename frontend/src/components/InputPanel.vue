@@ -15,22 +15,22 @@
     <div v-if="inputMode === 'url'" class="input-content">
       <div class="url-input-row">
         <input
-          v-model="appStoreUrl"
+          v-model="targetUrl"
           type="text"
           class="url-input"
-          placeholder="输入 App Store 链接，例如 https://apps.apple.com/us/app/xxx/id123456789"
+          placeholder="输入任意包含评论的网页链接（App Store、Google Play、Amazon、TripAdvisor、豆瓣、GitHub、B站...）"
           @keyup.enter="submitURL"
           :disabled="store.isRunning"
         />
         <button
           class="btn-analyze"
           @click="submitURL"
-          :disabled="!appStoreUrl.trim() || store.isRunning"
+          :disabled="!targetUrl.trim() || store.isRunning"
         >
           {{ store.isRunning ? '分析中...' : '开始分析' }}
         </button>
       </div>
-      <p class="input-hint">支持任意国家/地区的 App Store 链接，评论数据始终从 US 区采集</p>
+      <p class="input-hint">支持任意包含评论的网站：App Store、Google Play、Amazon、TripAdvisor、豆瓣、GitHub、B站、华为应用市场、小米应用商店等</p>
 
       <!-- 分析目标 -->
       <div class="goal-section">
@@ -89,7 +89,7 @@ import { useAnalysisStore } from '../stores/analysis.js'
 const store = useAnalysisStore()
 
 const inputMode = ref('url')
-const appStoreUrl = ref('')
+const targetUrl = ref('')
 const analysisGoal = ref('')
 const fileInput = ref(null)
 const fileName = ref('')
@@ -99,7 +99,7 @@ const fileFormat = ref('') // 'json' | 'csv'
 function buildPayload() {
   const payload = {}
   if (inputMode.value === 'url') {
-    payload.app_store_url = appStoreUrl.value.trim()
+    payload.url = targetUrl.value.trim()
   } else {
     payload.file_data = fileData.value
     payload.file_format = fileFormat.value
@@ -111,7 +111,7 @@ function buildPayload() {
 }
 
 function submitURL() {
-  if (!appStoreUrl.value.trim() || store.isRunning) return
+  if (!targetUrl.value.trim() || store.isRunning) return
   store.runAnalysis(buildPayload())
 }
 
