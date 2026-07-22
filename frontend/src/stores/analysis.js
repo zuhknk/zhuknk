@@ -2,146 +2,190 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
 export const useAnalysisStore = defineStore('analysis', () => {
-  // ---- State ----
-  const stage = ref('idle')
+  // ===== 状态 =====
+  const stage = ref('idle')       // idle → parsing → collecting → cleaning → analyzing → evidence → prd → testcase → validating → done
   const progress = ref(0)
-  const message = ref('')
-  const error = ref(null)
-  const isRunning = ref(false)
+  const statusMessage = ref('')
+  const error = ref('')
+  const activeTab = ref('reviews')  // reviews | findings | requirements | testcases
 
-  const appId = ref('')
-  const appName = ref('')
-  const totalReviews = ref(0)
-  const cleanedReviews = ref(0)
-
-  const activeTab = ref('reviews') // reviews | findings | requirements | testcases
-  const progressEvents = ref([])
+  // 结果数据
   const reviews = ref([])
   const findings = ref([])
   const requirements = ref([])
   const testCases = ref([])
   const validationReport = ref(null)
+  const cleaningStats = ref(null)
   const dataLimitations = ref([])
   const warnings = ref([])
+  const analysisGoal = ref('')
 
-  // ---- Computed ----
-  const stageLabel = computed(() => {
-    const labels = {
-      idle: '就绪', parsing: '解析输入', collecting: '采集评论',
-      cleaning: '清洗数据', analyzing: '语义分析', evidence: '证据验证',
-      prd: '生成 PRD', testcase: '生成测试用例', validating: '最终校验',
-      done: '完成', error: '错误',
+  // 搜索/筛选
+  const reviewFilter = ref({ search: '', rating: 0, sort: 'date-desc' })
+
+  // ===== 计算属性 =====
+  const isRunning = computed(() => stage.value !== 'idle' && stage.value !== 'done')
+  const isDone = computed(() => stage.value === 'done')
+  const hasError = computed(() => !!error.value)
+
+  const filteredReviews = computed(() => {
+    let result = [...reviews.value]
+    const { search, rating, sort } = reviewFilter.value
+
+    if (search) {
+      const q = search.toLowerCase()
+      result = result.filter(r =>
+        r.title?.toLowerCase().includes(q) ||
+        r.content?.toLowerCase().includes(q) ||
+        r.author?.toLowerCase().includes(q)
+      )
     }
-    return labels[stage.value] || stage.value
+    if (rating > 0) {
+      result = result.filter(r => r.rating === rating)
+    }
+    // 排序
+    if (sort === 'date-desc') result.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    else if (sort === 'date-asc') result.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    else if (sort === 'rating-desc') result.sort((a, b) => b.rating - a.rating)
+    else if (sort === 'rating-asc') result.sort((a, b) => a.rating - b.rating)
+
+    return result
   })
 
-  const hasResults = computed(() => stage.value === 'done')
-
-  const tabItems = computed(() => [
-    { key: 'reviews', label: `评论 (${reviews.value.length})`, icon: '💬' },
-    { key: 'findings', label: `发现 (${findings.value.length})`, icon: '🔍' },
-    { key: 'requirements', label: `需求 (${requirements.value.length})`, icon: '📋' },
-    { key: 'testcases', label: `用例 (${testCases.value.length})`, icon: '✅' },
-  ])
-
-  // ---- Actions ----
-  function startAnalysis() {
-    stage.value = 'parsing'
+  // ===== 方法 =====
+  function reset() {
+    stage.value = 'idle'
     progress.value = 0
-    message.value = ''
-    error.value = null
-    isRunning.value = true
+    statusMessage.value = ''
+    error.value = ''
     activeTab.value = 'reviews'
-    progressEvents.value = []
     reviews.value = []
     findings.value = []
     requirements.value = []
     testCases.value = []
     validationReport.value = null
+    cleaningStats.value = null
     dataLimitations.value = []
     warnings.value = []
-  }
-
-  function updateProgress(data) {
-    stage.value = data.stage || stage.value
-    progress.value = data.progress ?? progress.value
-    message.value = data.message || message.value
-
-    progressEvents.value.push({
-      stage: data.stage, progress: data.progress,
-      message: data.message, timestamp: data.timestamp || new Date().toISOString(),
-    })
-
-    if (data.data) {
-      if (data.data.total_reviews != null) totalReviews.value = data.data.total_reviews
-      if (data.data.cleaned_reviews != null) cleanedReviews.value = data.data.cleaned_reviews
-      if (data.data.reviews) reviews.value = data.data.reviews
-      if (data.data.findings) findings.value = data.data.findings
-      if (data.data.requirements) requirements.value = data.data.requirements
-      if (data.data.test_cases) testCases.value = data.data.test_cases
-      if (data.data.validation_report) validationReport.value = data.data.validation_report
-      if (data.data.data_limitations) dataLimitations.value = data.data.data_limitations
-      if (data.data.warnings) warnings.value = data.data.warnings
-      if (data.data.app_id) appId.value = data.data.app_id
-      if (data.data.app_name) appName.value = data.data.app_name
-    }
-  }
-
-  function finishAnalysis() {
-    stage.value = 'done'
-    progress.value = 100
-    isRunning.value = false
+    analysisGoal.value = ''
+    reviewFilter.value = { search: '', rating: 0, sort: 'date-desc' }
   }
 
   function setError(msg) {
-    stage.value = 'error'
     error.value = msg
-    isRunning.value = false
+    stage.value = 'idle'
   }
 
-  function reset() {
-    stage.value = 'idle'; progress.value = 0; message.value = ''
-    error.value = null; isRunning.value = false
-    appId.value = ''; appName.value = ''; activeTab.value = 'reviews'
-    totalReviews.value = 0; cleanedReviews.value = 0
-    progressEvents.value = []; reviews.value = []; findings.value = []
-    requirements.value = []; testCases.value = []
-    validationReport.value = null; dataLimitations.value = []; warnings.value = []
+  function handleSSEEvent(event, data) {
+    switch (event) {
+      case 'parsing':
+      case 'collecting':
+      case 'cleaning':
+      case 'analyzing':
+      case 'evidence':
+      case 'prd':
+      case 'testcase':
+      case 'validating':
+        stage.value = event
+        progress.value = data.progress || 0
+        statusMessage.value = data.message || ''
+        if (data.stats) cleaningStats.value = data.stats
+        break
+      case 'done':
+        stage.value = 'done'
+        progress.value = 100
+        reviews.value = data.reviews || []
+        findings.value = data.findings || []
+        requirements.value = data.requirements || []
+        testCases.value = data.test_cases || []
+        validationReport.value = data.validation_report || null
+        dataLimitations.value = data.data_limitations || []
+        warnings.value = data.warnings || []
+        analysisGoal.value = data.analysis_goal || ''
+        activeTab.value = 'findings'
+        break
+      case 'error':
+        setError(data.message || '分析过程发生错误')
+        break
+    }
   }
 
-  function exportResults() {
+  async function runAnalysis(payload) {
+    reset()
+    stage.value = 'parsing'
+    progress.value = 5
+    statusMessage.value = '正在连接分析服务...'
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error(`请求失败: ${response.status} ${response.statusText}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            // 事件类型行，暂存
+            const eventType = line.slice(7).trim()
+            buffer = 'event:' + eventType + '\n' + buffer
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              // 从 buffer 中提取事件类型
+              const eventMatch = buffer.match(/event:(\w+)/)
+              const eventType = eventMatch ? eventMatch[1] : 'unknown'
+              handleSSEEvent(eventType, data)
+            } catch (e) {
+              console.warn('SSE 解析失败:', line, e)
+            }
+          }
+        }
+      }
+    } catch (e) {
+      setError(e.message || '网络请求失败')
+    }
+  }
+
+  function exportJSON() {
     const data = {
-      app_id: appId.value,
-      app_name: appName.value,
-      total_reviews: totalReviews.value,
-      cleaned_reviews: cleanedReviews.value,
       reviews: reviews.value,
       findings: findings.value,
       requirements: requirements.value,
       test_cases: testCases.value,
       validation_report: validationReport.value,
-      data_limitations: dataLimitations.value,
-      warnings: warnings.value,
+      analysis_goal: analysisGoal.value,
       exported_at: new Date().toISOString(),
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `review-analysis-${appId.value || 'export'}-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `app-review-analysis-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   return {
-    // state
-    stage, progress, message, error, isRunning,
-    appId, appName, totalReviews, cleanedReviews, activeTab,
-    progressEvents, reviews, findings, requirements, testCases,
-    validationReport, dataLimitations, warnings,
-    // computed
-    stageLabel, hasResults, tabItems,
-    // actions
-    startAnalysis, updateProgress, finishAnalysis, setError, reset, exportResults,
+    stage, progress, statusMessage, error, activeTab,
+    reviews, findings, requirements, testCases, validationReport,
+    cleaningStats, dataLimitations, warnings, analysisGoal,
+    reviewFilter, filteredReviews,
+    isRunning, isDone, hasError,
+    reset, setError, handleSSEEvent, runAnalysis, exportJSON,
   }
 })

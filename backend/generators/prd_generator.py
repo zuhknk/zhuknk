@@ -1,87 +1,57 @@
-"""PRD 需求生成模块"""
+"""LLM 驱动的 PRD 生成"""
 
-import json
-import logging
-from typing import Optional
-
-from models import ReviewFinding, Requirement
+import uuid, json
 from llm_client import analyze_batch
-from prompts import PRD_GENERATION_SYSTEM, PRD_GENERATION_USER
+from prompts import PRD_GENERATION_SYSTEM
+from models import Requirement, ReviewFinding
 
-logger = logging.getLogger(__name__)
 
+async def generate_requirements(findings: list[ReviewFinding], analysis_goal: str = "") -> list[Requirement]:
+    """基于分析发现生成产品需求"""
+    findings_json = []
+    for f in findings:
+        findings_json.append({
+            "finding_id": f.finding_id,
+            "topic": f.topic,
+            "description": f.description,
+            "severity": f.severity,
+            "sentiment": f.sentiment,
+            "sample_count": f.sample_count,
+            "evidence_level": f.evidence_level,
+            "excerpts": f.excerpts[:5],
+            "review_ids": f.review_ids,
+        })
 
-async def generate_requirements(
-    findings: list[ReviewFinding],
-    app_context: str = "",
-    goal: str = "",
-    constraint: str = "",
-    progress_callback: Optional[callable] = None,
-) -> list[Requirement]:
-    """
-    阶段 5: PRD 需求生成
-
-    基于验证后的分析发现，生成产品需求文档。
-
-    Args:
-        findings: 验证后的分析发现
-        app_context: 应用上下文
-        goal: 用户分析目标
-        constraint: 用户约束
-        progress_callback: 进度回调
-
-    Returns:
-        PRD 需求列表
-    """
-    if not findings:
-        logger.warning("No findings to generate requirements from")
-        return []
-
-    # 构造 findings JSON
-    findings_json = json.dumps(
-        [f.model_dump() for f in findings],
-        ensure_ascii=False,
-    )
-
-    goal_context = f"Analysis goal: {goal}" if goal else ""
-    constraint_context = f"Constraints: {constraint}" if constraint else ""
-
-    user_prompt = PRD_GENERATION_USER.format(
-        findings_json=findings_json,
-        app_context=app_context or "iOS mobile application",
-        goal_context=goal_context,
-        constraint_context=constraint_context,
-    )
+    user_prompt = json.dumps(findings_json, ensure_ascii=False, indent=2)
+    goal_hint = ""
+    if analysis_goal:
+        goal_hint = f"\n\n分析目标: {analysis_goal}。请基于此目标设定优先级。"
 
     try:
-        result = await analyze_batch(
-            PRD_GENERATION_SYSTEM,
-            user_prompt,
-            temperature=0.5,
-            max_tokens=4096,
-        )
-
+        result = await analyze_batch(PRD_GENERATION_SYSTEM, user_prompt + goal_hint)
         requirements = []
-        for req_data in result.get("requirements", []):
+        for i, req in enumerate(result.get("requirements", [])):
+            related_ids = req.get("related_finding_ids", [])
+            # 收集关联 finding 的 review_ids
+            related_review_ids = []
+            for fid in related_ids:
+                for f in findings:
+                    if f.finding_id == fid:
+                        related_review_ids.extend(f.review_ids)
+                        break
+
             requirements.append(Requirement(
-                req_id=req_data.get("req_id", f"REQ-{len(requirements)+1:03d}"),
-                title=req_data.get("title", ""),
-                description=req_data.get("description", ""),
-                user_story=req_data.get("user_story", ""),
-                priority=req_data.get("priority", "P1"),
-                version=req_data.get("version", "v1.0"),
-                related_finding_ids=req_data.get("related_finding_ids", []),
-                related_review_ids=req_data.get("related_review_ids", []),
-                acceptance_criteria=req_data.get("acceptance_criteria", []),
-                is_assumption=req_data.get("is_assumption", False),
+                req_id=req.get("req_id", f"REQ-{i+1:03d}"),
+                title=req.get("title", ""),
+                description=req.get("description", ""),
+                user_story=req.get("user_story", ""),
+                priority=req.get("priority", "P2"),
+                acceptance_criteria=req.get("acceptance_criteria", []),
+                related_finding_ids=related_ids,
+                related_review_ids=list(set(related_review_ids))[:10],
+                is_assumption=req.get("is_assumption", False),
             ))
-
-        if progress_callback:
-            await progress_callback(100, f"PRD 生成完成: {len(requirements)} 条需求")
-
-        logger.info(f"Generated {len(requirements)} requirements")
         return requirements
-
     except Exception as e:
-        logger.error(f"PRD generation failed: {e}")
+        print(f"PRD generation failed: {e}")
         return []

@@ -1,78 +1,36 @@
 @echo off
 title LaienTech - App Review Analyzer
-set "ROOT=%~dp0"
+cd /d "%~dp0"
 
-echo.
-echo   ==========================================
-echo     LaienTech iOS App Review Analyzer
-echo   ==========================================
-echo.
-
-:: --- 1. Python ---
-echo   [1/4] Python...
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo   [X] Python not found. Install Python 3.10+
-    echo   [X] https://www.python.org/downloads/
-    goto end
-)
+echo === Step 1: Python ===
 python --version
-echo   [OK]
+if errorlevel 1 ( echo Python not found! Install Python 3.10+ && pause && exit )
+echo OK
 
-:: --- 2. Node ---
-echo   [2/4] Node.js...
-node --version >nul 2>&1
-if errorlevel 1 (
-    echo   [X] Node.js not found. Install Node.js
-    echo   [X] https://nodejs.org/
-    goto end
-)
+echo === Step 2: Node ===
 node --version
-echo   [OK]
+if errorlevel 1 ( echo Node not found! Install Node.js && pause && exit )
+echo OK
 
-:: --- 3. .env ---
-echo   [3/4] Config...
-if not exist "%ROOT%.env" (
-    if exist "%ROOT%.env.example" (
-        copy "%ROOT%.env.example" "%ROOT%.env" >nul
-        echo   Copied from .env.example
-    )
-) else ( echo   [OK] )
-
-:: --- 4. Dependencies ---
-echo   [4/4] Dependencies...
-cd /d "%ROOT%backend"
+echo === Step 3: Dependencies ===
+cd backend
 pip install -r requirements.txt >nul 2>&1
-cd /d "%ROOT%"
+cd ..
 
-if not exist "%ROOT%frontend\node_modules" (
-    echo   Installing frontend deps...
-    cd /d "%ROOT%frontend"
+if not exist "frontend\node_modules" (
+    cd frontend
     call npm install
-    cd /d "%ROOT%"
+    cd ..
 )
 
-echo.
-echo   Starting services...
-echo.
+echo === Step 4: Start Backend ===
+start "Backend" /D "%~dp0backend" python main.py
+timeout /t 5 /nobreak >nul
 
-:: 后端 — 用 cmd /k 保持窗口打开（可以看到报错）
-start "Backend-8000" cmd /k "cd /d "%ROOT%backend" && echo Backend: http://localhost:8000 && python main.py"
-timeout /t 4 /nobreak >nul
+echo === Step 5: Start Frontend ===
+start "Frontend" /D "%~dp0frontend" npx vite --host
+timeout /t 3 /nobreak >nul
 
-:: 前端 — 同上
-start "Frontend-3000" cmd /k "cd /d "%ROOT%frontend" && echo Frontend: http://localhost:3000 && npx vite --host"
-timeout /t 4 /nobreak >nul
-
-:: 打开浏览器
 start http://localhost:3000
-
-echo.
-echo   ==========================================
-echo   Done! http://localhost:3000
-echo   Close this window to stop all services
-echo   ==========================================
-echo.
-
-:end
+echo Done! http://localhost:3000
 pause

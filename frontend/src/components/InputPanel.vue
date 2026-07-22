@@ -1,104 +1,85 @@
 <template>
-  <section class="input-panel">
-    <div class="panel-card">
-      <div class="panel-header">
-        <h2 class="panel-title">输入 App Store 链接</h2>
-        <button class="mode-toggle" @click="showFile = !showFile" :disabled="store.isRunning">
-          {{ showFile ? '← 链接输入' : '📁 文件导入' }}
-        </button>
-      </div>
+  <div class="input-panel">
+    <div class="input-tabs">
+      <button
+        :class="['tab-btn', { active: inputMode === 'url' }]"
+        @click="inputMode = 'url'"
+      >URL 输入</button>
+      <button
+        :class="['tab-btn', { active: inputMode === 'file' }]"
+        @click="inputMode = 'file'"
+      >文件导入</button>
+    </div>
 
-      <!-- URL 模式 -->
-      <div v-if="!showFile">
-        <p class="panel-desc">
-          粘贴美国 App Store 应用链接，系统将自动采集评论并进行语义分析
-        </p>
-
-        <div class="input-row">
-          <div class="input-wrapper">
-            <span class="input-icon">🔗</span>
-            <input
-              v-model="appUrl"
-              type="url"
-              class="input-field"
-              placeholder="https://apps.apple.com/us/app/xxx/id123456789"
-              :disabled="store.isRunning"
-              @keyup.enter="handleAnalyzeUrl"
-            />
-          </div>
-          <button
-            class="btn-analyze"
-            :disabled="!appUrl.trim() || store.isRunning"
-            @click="handleAnalyzeUrl"
-          >
-            <span v-if="store.isRunning" class="spinner"></span>
-            <span v-else>开始分析</span>
-          </button>
-        </div>
-
-        <div class="example-hint">
-          <span>示例：</span>
-          <button class="btn-example" @click="setExample('839285684')">Workout for Women</button>
-          <button class="btn-example" @click="setExample('284815942')">Google</button>
-          <span class="hint-divider">|</span>
-          <label class="sort-label">排序：</label>
-          <select v-model="sortBy" class="sort-select" :disabled="store.isRunning">
-            <option value="mostrecent">最新</option>
-            <option value="mosthelpful">最有帮助</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- 文件导入模式 -->
-      <div v-else>
-        <p class="panel-desc">
-          上传 JSON 或 CSV 格式的评论数据文件，系统将直接进行分析
-        </p>
-
-        <div class="file-upload-area"
-          :class="{ dragging }"
-          @dragover.prevent="dragging = true"
-          @dragleave="dragging = false"
-          @drop.prevent="handleDrop"
-          @click="triggerFileInput"
-        >
-          <input
-            ref="fileInput"
-            type="file"
-            accept=".json,.csv"
-            class="file-input-hidden"
-            @change="handleFileSelect"
-          />
-          <div v-if="!selectedFile" class="upload-placeholder">
-            <span class="upload-icon">📂</span>
-            <span>拖拽文件到此处，或点击选择</span>
-            <span class="upload-hint">支持 .json / .csv</span>
-          </div>
-          <div v-else class="upload-selected">
-            <span class="upload-icon">📄</span>
-            <span class="file-name">{{ selectedFile.name }}</span>
-            <span class="file-size">{{ formatSize(selectedFile.size) }}</span>
-            <button class="btn-clear" @click.stop="clearFile">✕</button>
-          </div>
-        </div>
-
+    <!-- URL 输入模式 -->
+    <div v-if="inputMode === 'url'" class="input-content">
+      <div class="url-input-row">
+        <input
+          v-model="appStoreUrl"
+          type="text"
+          class="url-input"
+          placeholder="输入 App Store 链接，例如 https://apps.apple.com/us/app/xxx/id123456789"
+          @keyup.enter="submitURL"
+          :disabled="store.isRunning"
+        />
         <button
-          class="btn-analyze btn-file"
-          :disabled="!selectedFile || store.isRunning"
-          @click="handleAnalyzeFile"
+          class="btn-analyze"
+          @click="submitURL"
+          :disabled="!appStoreUrl.trim() || store.isRunning"
         >
-          <span v-if="store.isRunning" class="spinner"></span>
-          <span v-else>导入并分析</span>
+          {{ store.isRunning ? '分析中...' : '开始分析' }}
         </button>
       </div>
+      <p class="input-hint">支持任意国家/地区的 App Store 链接，评论数据始终从 US 区采集</p>
 
-      <!-- 错误提示 -->
-      <div v-if="store.error" class="error-banner">
-        <span class="error-icon">⚠</span>
-        <span>{{ store.error }}</span>
+      <!-- 分析目标 -->
+      <div class="goal-section">
+        <label class="goal-label">分析目标（可选）</label>
+        <input
+          v-model="analysisGoal"
+          type="text"
+          class="goal-input"
+          placeholder="例如：关注订阅转化率、低评分评论、特定版本 v3.2、健身可用性..."
+          :disabled="store.isRunning"
+        />
       </div>
     </div>
-  </section>
+
+    <!-- 文件导入模式 -->
+    <div v-else class="input-content">
+      <div
+        class="drop-zone"
+        @dragover.prevent
+        @drop.prevent="handleDrop"
+        @click="triggerFileInput"
+      >
+        <div class="drop-icon">&#x1F4C4;</div>
+        <p class="drop-text">拖拽文件到此处，或点击选择文件</p>
+        <p class="drop-hint">支持 JSON / CSV 格式的评论数据</p>
+      </div>
+      <input ref="fileInput" type="file" accept=".json,.csv" @change="handleFileSelect" style="display:none" />
+      <div v-if="fileName" class="file-info">
+        <span class="file-name">{{ fileName }}</span>
+        <button class="btn-analyze" @click="submitFile" :disabled="store.isRunning">
+          {{ store.isRunning ? '分析中...' : '开始分析' }}
+        </button>
+      </div>
+
+      <!-- 分析目标 -->
+      <div class="goal-section">
+        <label class="goal-label">分析目标（可选）</label>
+        <input
+          v-model="analysisGoal"
+          type="text"
+          class="goal-input"
+          placeholder="例如：关注订阅转化率、低评分评论、特定版本..."
+          :disabled="store.isRunning"
+        />
+      </div>
+    </div>
+
+    <div v-if="store.hasError" class="error-message">{{ store.error }}</div>
+  </div>
 </template>
 
 <script setup>
@@ -106,153 +87,255 @@ import { ref } from 'vue'
 import { useAnalysisStore } from '../stores/analysis.js'
 
 const store = useAnalysisStore()
-const appUrl = ref('')
-const showFile = ref(false)
-const sortBy = ref('mostrecent')
-const selectedFile = ref(null)
-const fileInput = ref(null)
-const dragging = ref(false)
 
-function setExample(appId) {
-  appUrl.value = `https://apps.apple.com/us/app/id${appId}`
+const inputMode = ref('url')
+const appStoreUrl = ref('')
+const analysisGoal = ref('')
+const fileInput = ref(null)
+const fileName = ref('')
+const fileData = ref(null)
+const fileFormat = ref('') // 'json' | 'csv'
+
+function buildPayload() {
+  const payload = {}
+  if (inputMode.value === 'url') {
+    payload.app_store_url = appStoreUrl.value.trim()
+  } else {
+    payload.file_data = fileData.value
+    payload.file_format = fileFormat.value
+  }
+  if (analysisGoal.value.trim()) {
+    payload.analysis_goal = analysisGoal.value.trim()
+  }
+  return payload
+}
+
+function submitURL() {
+  if (!appStoreUrl.value.trim() || store.isRunning) return
+  store.runAnalysis(buildPayload())
 }
 
 function triggerFileInput() {
   fileInput.value?.click()
 }
 
+function parseCSV(text) {
+  const lines = text.trim().split('\n')
+  if (lines.length < 2) throw new Error('CSV 至少需要标题行和一行数据')
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
+  const rows = []
+  for (let i = 1; i < lines.length; i++) {
+    const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''))
+    const row = {}
+    headers.forEach((h, idx) => { row[h] = vals[idx] || '' })
+    if (row.rating) row.rating = parseInt(row.rating) || 0
+    if (row.vote_sum) row.vote_sum = parseInt(row.vote_sum) || 0
+    if (row.vote_count) row.vote_count = parseInt(row.vote_count) || 0
+    rows.push(row)
+  }
+  return rows
+}
+
 function handleFileSelect(e) {
-  const file = e.target.files?.[0]
-  if (file) selectedFile.value = file
+  const file = e.target.files[0]
+  if (!file) return
+  fileName.value = file.name
+  const isCSV = file.name.toLowerCase().endsWith('.csv')
+  fileFormat.value = isCSV ? 'csv' : 'json'
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    try {
+      if (isCSV) {
+        fileData.value = parseCSV(ev.target.result)
+      } else {
+        fileData.value = JSON.parse(ev.target.result)
+      }
+    } catch (err) {
+      store.setError((isCSV ? 'CSV' : 'JSON') + ' 文件解析失败，请检查文件格式: ' + err.message)
+    }
+  }
+  reader.readAsText(file)
 }
 
 function handleDrop(e) {
-  dragging.value = false
-  const file = e.dataTransfer.files?.[0]
-  if (file) selectedFile.value = file
-}
-
-function clearFile() {
-  selectedFile.value = null
-  if (fileInput.value) fileInput.value.value = ''
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-}
-
-async function handleAnalyzeUrl() {
-  if (!appUrl.value.trim() || store.isRunning) return
-  store.startAnalysis()
-  await runSSE({ app_url: appUrl.value.trim(), sort_by: sortBy.value })
-}
-
-async function handleAnalyzeFile() {
-  if (!selectedFile.value || store.isRunning) return
-  store.startAnalysis()
-
-  try {
-    const text = await selectedFile.value.text()
-    const isJson = selectedFile.value.name.endsWith('.json')
-    const payload = {
-      app_url: '',
-      file_data: text,
-      file_format: isJson ? 'json' : 'csv',
-    }
-    await runSSE(payload)
-  } catch (err) {
-    store.setError('文件读取失败: ' + err.message)
-  }
-}
-
-async function runSSE(payload) {
-  try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.stage === 'done') {
-              store.updateProgress(data)
-              store.finishAnalysis()
-            } else if (data.stage === 'error') {
-              store.setError(data.message)
-            } else {
-              store.updateProgress(data)
-            }
-          } catch (e) { /* skip */ }
-        }
+  const file = e.dataTransfer.files[0]
+  if (!file) return
+  fileName.value = file.name
+  const isCSV = file.name.toLowerCase().endsWith('.csv')
+  fileFormat.value = isCSV ? 'csv' : 'json'
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    try {
+      if (isCSV) {
+        fileData.value = parseCSV(ev.target.result)
+      } else {
+        fileData.value = JSON.parse(ev.target.result)
       }
+    } catch (err) {
+      store.setError((isCSV ? 'CSV' : 'JSON') + ' 文件解析失败，请检查文件格式: ' + err.message)
     }
-  } catch (err) {
-    store.setError(err.message || '网络请求失败')
   }
+  reader.readAsText(file)
+}
+
+function submitFile() {
+  if (!fileData.value || store.isRunning) return
+  store.runAnalysis(buildPayload())
 }
 </script>
 
 <style scoped>
-.input-panel { margin-bottom: var(--space-xl); }
-.panel-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: var(--space-lg); box-shadow: var(--shadow-md); }
-.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-xs); }
-.panel-title { color: var(--text-primary); font-size: var(--font-size-lg); }
-.mode-toggle { background: none; border: 1px solid var(--border-color); border-radius: var(--border-radius-sm); padding: 4px 12px; color: var(--text-secondary); font-size: var(--font-size-sm); font-family: var(--font-family); cursor: pointer; transition: all var(--transition-fast); }
-.mode-toggle:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.panel-desc { color: var(--text-secondary); font-size: var(--font-size-sm); margin-bottom: var(--space-lg); }
-
-.input-row { display: flex; gap: var(--space-md); }
-.input-wrapper { flex: 1; position: relative; display: flex; align-items: center; }
-.input-icon { position: absolute; left: 12px; font-size: 1rem; pointer-events: none; }
-.input-field { width: 100%; padding: 10px 12px 10px 36px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--border-radius); color: var(--text-primary); font-size: var(--font-size-base); font-family: var(--font-mono); outline: none; transition: border-color var(--transition-fast); }
-.input-field:focus { border-color: var(--border-active); box-shadow: 0 0 0 3px var(--color-primary-glow); }
-.input-field:disabled { opacity: 0.5; cursor: not-allowed; }
-.input-field::placeholder { color: var(--text-muted); font-family: var(--font-family); }
-
-.btn-analyze { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); min-width: 120px; padding: 10px 24px; background: var(--color-primary); border: none; border-radius: var(--border-radius); color: var(--bg-primary); font-size: var(--font-size-base); font-weight: 600; font-family: var(--font-family); cursor: pointer; transition: all var(--transition-fast); }
-.btn-analyze:hover:not(:disabled) { background: var(--color-primary-dark); box-shadow: var(--shadow-glow); }
-.btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-file { margin-top: var(--space-md); width: 100%; }
-.spinner { width: 16px; height: 16px; border: 2px solid transparent; border-top-color: var(--bg-primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
-
-/* File Upload */
-.file-upload-area { border: 2px dashed var(--border-color); border-radius: var(--border-radius); padding: var(--space-xl); text-align: center; cursor: pointer; transition: all var(--transition-fast); }
-.file-upload-area:hover, .file-upload-area.dragging { border-color: var(--border-active); background: var(--color-primary-glow); }
-.file-input-hidden { display: none; }
-.upload-placeholder { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); color: var(--text-muted); font-size: var(--font-size-sm); }
-.upload-icon { font-size: 2rem; }
-.upload-hint { font-size: 0.75rem; }
-.upload-selected { display: flex; align-items: center; gap: var(--space-md); color: var(--text-primary); font-size: var(--font-size-sm); }
-.file-name { color: var(--color-primary); font-weight: 600; }
-.file-size { color: var(--text-muted); font-size: 0.8rem; }
-.btn-clear { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1rem; padding: 4px; }
-.btn-clear:hover { color: var(--color-error); }
-
-.example-hint { margin-top: var(--space-md); display: flex; align-items: center; gap: var(--space-sm); font-size: var(--font-size-sm); color: var(--text-muted); }
-.btn-example { background: none; border: 1px solid var(--border-color); border-radius: var(--border-radius-sm); padding: 2px 10px; color: var(--text-secondary); font-size: var(--font-size-sm); font-family: var(--font-family); cursor: pointer; transition: all var(--transition-fast); }
-.btn-example:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.hint-divider { color: var(--border-color); }
-.sort-label { color: var(--text-muted); }
-.sort-select { padding: 2px 8px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--border-radius-sm); color: var(--text-secondary); font-size: var(--font-size-sm); font-family: var(--font-family); cursor: pointer; outline: none; }
-.sort-select:focus { border-color: var(--border-active); }
-
-.error-banner { margin-top: var(--space-md); display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.3); border-radius: var(--border-radius); color: var(--color-error); font-size: var(--font-size-sm); }
-.error-icon { font-size: 1rem; flex-shrink: 0; }
+.input-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.input-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+.tab-btn {
+  padding: 10px 24px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.tab-btn.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+.tab-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.url-input-row {
+  display: flex;
+  gap: 12px;
+}
+.url-input {
+  flex: 1;
+  padding: 12px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-family-mono);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.url-input:focus {
+  border-color: var(--color-primary);
+}
+.url-input:disabled {
+  opacity: 0.5;
+}
+.btn-analyze {
+  padding: 12px 32px;
+  background: var(--color-primary);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: var(--border-radius);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.btn-analyze:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn-analyze:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.input-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+.drop-zone {
+  border: 2px dashed var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.drop-zone:hover {
+  border-color: var(--color-primary);
+}
+.drop-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.drop-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.drop-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+.file-info {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: var(--bg-input);
+  border-radius: var(--border-radius);
+}
+.file-name {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.error-message {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 82, 82, 0.1);
+  border: 1px solid var(--color-error);
+  border-radius: var(--border-radius);
+  color: var(--color-error);
+  font-size: 14px;
+}
+.goal-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+.goal-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.goal-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.goal-input:focus {
+  border-color: var(--color-primary);
+}
+.goal-input:disabled {
+  opacity: 0.5;
+}
 </style>

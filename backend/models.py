@@ -1,63 +1,64 @@
-"""应用数据模型"""
-
-from datetime import datetime
+"""Pydantic 数据模型"""
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+
+# ===== 请求模型 =====
+
+class AnalysisRequest(BaseModel):
+    """分析请求"""
+    app_store_url: str = ""
+    sort: str = "mostrecent"
+    file_data: Optional[list[dict]] = None
+    file_format: str = "json"
+    analysis_goal: str = ""
+
+
+# ===== 评论模型 =====
 
 class ReviewRaw(BaseModel):
-    """原始评论数据"""
     review_id: str
     rating: int
     title: str
     content: str
     author: str
-    date: datetime
     version: str
-    vote_sum: int = 0
-    vote_count: int = 0
-
-
-class ReviewCleaned(BaseModel):
-    """清洗后的评论数据"""
-    review_id: str
-    rating: int
-    title: str
-    content: str
-    author: str
-    date: datetime
-    version: str
+    date: str = ""
     vote_sum: int
     vote_count: int
-    language: str = ""
-    content_length: int = 0
-    is_duplicate: bool = False
 
+
+class ReviewCleaned(ReviewRaw):
+    is_duplicate: bool = False
+    is_noise: bool = False
+    language: str = "unknown"
+    fingerprint: str = ""
+
+
+# ===== 分析结果模型 =====
 
 class ReviewFinding(BaseModel):
-    """分析发现"""
     finding_id: str
     topic: str
     description: str
-    severity: str  # critical / high / medium / low
-    sentiment: str  # positive / negative / neutral / mixed
+    severity: str
+    sentiment: str
     sample_count: int
-    review_ids: list[str] = []
-    excerpts: list[str] = []
-    confidence: float = 0.0  # 0.0 ~ 1.0
-    evidence_level: str = "insufficient"  # sufficient / limited / insufficient
+    review_ids: list[str]
+    excerpts: list[str]
+    confidence: float
+    evidence_level: str
     conflicting_feedback: list[str] = []
-    source: str = "llm"  # llm / statistical / rule
+    source: str = "llm"
     uncertainty: str = ""
 
 
 class Requirement(BaseModel):
-    """PRD 需求"""
     req_id: str
     title: str
     description: str
-    user_story: str = ""
-    priority: str = "P1"  # P0 / P1 / P2
+    user_story: str
+    priority: str
     version: str = "v1.0"
     related_finding_ids: list[str] = []
     related_review_ids: list[str] = []
@@ -66,7 +67,6 @@ class Requirement(BaseModel):
 
 
 class TestCase(BaseModel):
-    """测试用例"""
     case_id: str
     req_id: str
     title: str
@@ -77,32 +77,10 @@ class TestCase(BaseModel):
     priority: str = "P1"
 
 
-class AnalysisRequest(BaseModel):
-    """分析请求"""
-    app_url: str
-    goal: str = ""
-    constraint: str = ""
-    max_reviews: int = 500
+# ===== 校验模型 =====
 
-
-class AnalysisProgress(BaseModel):
-    """分析进度"""
-    stage: str  # collecting / cleaning / analyzing / evidence / prd / testcase / validating / done / error
-    progress: int = 0  # 0-100
-    message: str = ""
-    data: Optional[dict] = None
-    error: Optional[str] = None
-
-
-class AnalysisResult(BaseModel):
-    """最终分析结果"""
-    app_id: str
-    app_name: str = ""
-    total_reviews: int = 0
-    cleaned_reviews: int = 0
-    findings: list[ReviewFinding] = []
-    requirements: list[Requirement] = []
-    test_cases: list[TestCase] = []
-    validation_report: dict = {}
-    data_limitations: list[str] = []
-    warnings: list[str] = []
+class ValidationReport(BaseModel):
+    validation_passed: bool = True
+    issues: list[dict] = []
+    traceability: dict = {}
+    summary: str = ""
