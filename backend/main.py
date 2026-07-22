@@ -128,8 +128,8 @@ async def analyze(request: AnalysisRequest):
             llm_available = _check_llm_available()
 
             if llm_available:
-                # 小数据集（≤20条）：单次 LLM 调用完成全部任务
-                if len(valid) <= 20:
+                # 小数据集（≤50条）：单次 LLM 调用完成全部任务
+                if len(valid) <= 50:
                     yield sse_event("analyzing", {"stage": "analyzing", "progress": 50,
                                  "message": f"LLM 一体化分析中（{len(valid)} 条评论）..."})
 
@@ -234,7 +234,7 @@ async def analyze(request: AnalysisRequest):
                     findings = await validate_evidence(findings, valid)
 
                     # 阶段 6-8: PRD + 测试用例 + 校验 (合并为一次 LLM 调用)
-                    yield sse_event("prd", {"stage": "prd", "progress": 75, "message": "生成需求与测试用例..."})
+                    yield sse_event("prd", {"stage": "prd", "progress": 75, "message": "LLM 生成需求、测试用例与校验中..."})
                     findings_json = [{
                         "finding_id": f.finding_id, "topic": f.topic, "description": f.description,
                         "severity": f.severity, "sentiment": f.sentiment, "sample_count": f.sample_count,
