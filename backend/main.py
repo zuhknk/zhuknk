@@ -64,7 +64,7 @@ async def analyze(request: AnalysisRequest):
                 reviews = await collect_reviews(
                     app_id=app_id,
                     sort=request.sort or "mostrecent",
-                    country=settings.RSS_COUNTRY,
+                    country=country,
                     max_pages=settings.RSS_MAX_PAGES,
                 )
             else:
