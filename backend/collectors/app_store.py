@@ -16,7 +16,12 @@ def parse_app_store_url(url: str) -> tuple[str, str]:
 
 
 def build_rss_url(app_id: str, page: int = 1, sort: str = "mostrecent", country: str = "us") -> str:
-    return f"https://itunes.apple.com/{country}/rss/customerreviews/page={page}/id/{app_id}/sortby={sort}/json"
+    # 使用新的 RSS URL 格式，兼容中国区和美国区应用
+    # 旧格式 /{country}/rss/customerreviews/page=1/id={app_id}/sortby=mostrecent/json 对中国区返回空数据
+    # 新格式 /rss/customerreviews/id={app_id}/country={country}/json 可正常获取评论
+    if sort and sort != "mostrecent":
+        return f"https://itunes.apple.com/{country}/rss/customerreviews/page={page}/id/{app_id}/sortby={sort}/json"
+    return f"https://itunes.apple.com/rss/customerreviews/id={app_id}/country={country}/json"
 
 
 def parse_rss_entry(entry: dict) -> ReviewRaw:
